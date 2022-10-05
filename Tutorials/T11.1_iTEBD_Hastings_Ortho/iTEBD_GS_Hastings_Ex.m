@@ -1,31 +1,31 @@
-function [Lambda,Gamma,Eiter] = iTEBD_GS_Vidal_Ex (Lambda,Gamma,H,Nkeep,taus)
+function [Lambda,Bs,Eiter] = iTEBD_GS_Hastings_Ex (Lambda,Bs,H,Nkeep,taus)
 % < Description >
 %
-% [Lambda,Gamma,Eiter] = iTEBD_GS_Vidal_Ex (Lambda,Gamma,H,Nkeep,taus)
+% [Lambda,Bs,Eiter] = iTEBD_GS_Hastings_Ex (Lambda,Bs,H,Nkeep,taus)
 %
 % The iTEBD (infinite time-evolving block decimation) method to find the
 % ground state of an infinite one-dimensional system, by applying imaginary
-% time evolutions. Here we consider a unit cell of two sites.
+% time evolutions. This function implements M. Hastings' version proposed
+% in Hastings2009 [M. Hastings, J. Math. Phys. 50, 095207 (2009)]. Here we
+% consider a unit cell of two sites.
 %
 % < Input >
 % Lambda : [1 x 2 cell] Lambda{1} and Lambda{2} contain the singular values
 %       at odd and even bond, respectively, as column vectors. An odd
 %       (even) bond sits just on the right of an odd (even) site.
-% Gamma : [1 x 2 cell] Gamma{1} and Gamma{2} are rank-3 "Gamma" tensors for
-%       odd and even sites, respectively. Their legs are ordered as left-
-%       right-physical(bottom).
-%       In an infinite MPS, the tensors are repeated as follows (here the
-%       numbers next to the legs indicate their orders):
-%
-% ->-Gamma{1}->-*->-diag(Lambda{1})->-*->-Gamma{2}->-*->-diag(Lambda{2})->- 
-% 1    ^     2   1                 2   1     ^    2   1                 2 
-%      |3                                    |3
-%
+% Bs : [1 x 2 cell] Bs{..} are "supposedly" right-normalized tensors that
+%       are given by the contraction of Gamma*Lambda type. Bs{1} and Bs{2}
+%       act on an odd and even site, respectively. In terms of the
+%       conventions used in iTEBD_GS_Vidal (which implements Vidal's
+%       original iTEBD), Bs{k} corresponds to Gamma{k}*diag(Lambda{k}).
+%       Note that, if we initialize the tensors with random elements, they
+%       are of course not right-normalized. But as the imaginary time
+%       evolution goes, they will converge to the right-normalized forms.
 % H : [tensor] Two-site interaction Hamiltonian. Its leg convention is as
 %       below:
 %
 %    2         4        [ 2 (4) is to be contracted with the third leg
-%    ^         ^          of Gamma{1} (Gamma{2}) ]
+%    ^         ^          of Bs{1} (Bs{2}) ]
 %    |   ...   |
 %   [     H     ]
 %    |   ...   |
@@ -39,8 +39,9 @@ function [Lambda,Gamma,Eiter] = iTEBD_GS_Vidal_Ex (Lambda,Gamma,H,Nkeep,taus)
 %       within the m-th outer iteration take the times size taus(m).
 %
 % < Output >
-% Lambda, Gamma : [1 x 2 cells each] Cell arrays of Lambda and Gamma
-%       tensors, repectively, after the imaginary time evolution.
+% Lambda, Bs : [1 x 2 cells each] Cell arrays of Lambda and approximately
+%       right-normalized tensors, repectively, after the imaginary time
+%       evolution.
 % Eiter : [(numel(taus) x 2 x 2 matrix] Eiter(m,n,k) is the measured energy
 %       for an odd (k = 1) or even (k = 2) bond after odd (n = 1) or
 %       even (n = 2) bonds are updated, at the m-th "outer" iteration.
@@ -54,13 +55,13 @@ function [Lambda,Gamma,Eiter] = iTEBD_GS_Vidal_Ex (Lambda,Gamma,H,Nkeep,taus)
 tobj = tic2;
 
 Lambda = Lambda(:);
-Gamma = Gamma(:);
+Bs = Bs(:);
 Nstep = numel(taus);
 ldim = size(H,1); % local space dimension
 Skeep = 1e-8;
 
 % % % check the integrity of input
-if any([numel(Lambda) numel(Gamma)] ~= 2)
+if any([numel(Lambda) numel(Bs)] ~= 2)
     error('ERR: # of sites per unit cell should be 2.');
 end
 
@@ -73,21 +74,21 @@ end
 for it = (1:2)
     if ~isvector(Lambda{it})
         error(['ERR: Lambda{',sprintf('%i',it),'} should be vector.']);
-    elseif numel(Lambda{it}) ~= size(Gamma{it},2)
-        error(['ERR: Dimensions for Lambda{',sprintf('%i',it),'} and Gamma{', ...
+    elseif numel(Lambda{it}) ~= size(Bs{it},2)
+        error(['ERR: Dimensions for Lambda{',sprintf('%i',it),'} and Bs{', ...
             sprintf('%i',it),'} do not match.']);
-    elseif numel(Lambda{mod(it,2)+1}) ~= size(Gamma{it},1)
+    elseif numel(Lambda{mod(it,2)+1}) ~= size(Bs{it},1)
         error(['ERR: Dimensions for Lambda{',sprintf('%i',mod(it,2)+1), ...
-            '} and Gamma{',sprintf('%i',it),'} do not match.']);
-    elseif size(Gamma{it},3) ~= ldim
-        error(['ERR: The third leg of Gamma{',sprintf('%i',mod(it)), ...
+            '} and Bs{',sprintf('%i',it),'} do not match.']);
+    elseif size(Bs{it},3) ~= ldim
+        error(['ERR: The third leg of Bs{',sprintf('%i',mod(it)), ...
             '} should be of size equal to the leg of H.']);
     end
 end
 % % % 
 
 % show information
-disptime(['iTEBD ground state search: Nkeep = ',sprintf('%i',Nkeep), ...
+disptime(['iTEBD ground state search (Hastings'' version): Nkeep = ',sprintf('%i',Nkeep), ...
     ', # of imag. time steps = ',sprintf('%.4g',Nstep)]);
 
 % energy expectation value at each step
@@ -108,47 +109,18 @@ for it1 = (1:Nstep)
     for it2 = (1:2) % 1 (2): update odd (even) bonds
         % % % % TODO (start) % % % %
 
-        % Contract Lambda's and Gamma's to construct a rank-4 ket tensor to
-        % be updated
-    
-        % Contract a two-site gate exp(-taus(it1)*H) with the ket tensor
-    
-        % SVD; truncate singular values smaller than Skeep (= 1e-8 by
-        % default)
-    
-        % Normalize the singular value vector (so that the norm becomes 1)
-        
-        % Update Gamma{1}, Gamma{2}
-        
+        % It is also important to normalize the rank-4 tensor (without the
+        % Lambda tensor on its left) with the same normalization factor
+        % used to normalize the singular value vector; otherwise the result
+        % can diverge!
+
         % Measure energy per bond; consider the following ket:
-        % Lambda{2}*Gamma{1}*Lambda{1}*Gamma{2}*Lambda{2}*Gamma{1}*Lambda{1}
-        %  ----------------   --------------------------  ----------------
-        %      = TA                 = TB                      = TC
-        % TA, TB, and TC are useful choice of tensor contractions.
-        % The physical legs of TA and TB contract to the legs of the
-        % two-site gate that updates an odd bond; those of TB and TC for
-        % updating an even bond.
-        % And assume that the tensors on the left and the right of this
-        % rank-5 ket tensor are precisely left- and right-normalized,
-        % respectively. Of course they are not, but Vidal has found that
-        % the tensors converge to be left- and right-normalized forms, as
-        % the iteration goes.
-        if it2 == 1
-            
-        else
-
-        end
-
-        % contract the nearest-neighbor interaction term for an odd bond,
-        % i.e., its 1st and 2nd legs act on an odd site
-        
-        % contract the nearest-neighbor interaction term for an even bond,
-        % i.e., its 1st and 2nd legs act on an even site
-        
-        % compute the squared norm of the rank-5 ket tensor as a denominator for normalization
-        
-        % assign normalized energy values
-        Eiter(it1,it2,:) = 
+        % Lambda{2}*Bs{1}*Bs{2}*Bs{1}
+        %
+        % The physical legs of the first two B tensors, i.e., Bs{1} and
+        % Bs{2}, contract to the legs of the two-site gate that updates
+        % an odd bond; those of the latter B tensors, i.e., Bs{2} and
+        % Bs{1}, updates an even bond.
 
         % % % % TODO (end) % % % %
     end

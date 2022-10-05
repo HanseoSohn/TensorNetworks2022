@@ -1,7 +1,7 @@
-function [Lambda,Gamma,Eiter] = iTEBD_GS_Vidal_Ex (Lambda,Gamma,H,Nkeep,taus)
+function [Lambda,Gamma,Eiter] = iTEBD_GS_Vidal (Lambda,Gamma,H,Nkeep,taus)
 % < Description >
 %
-% [Lambda,Gamma,Eiter] = iTEBD_GS_Vidal_Ex (Lambda,Gamma,H,Nkeep,taus)
+% [Lambda,Gamma,Eiter] = iTEBD_GS_Vidal (Lambda,Gamma,H,Nkeep,taus)
 %
 % The iTEBD (infinite time-evolving block decimation) method to find the
 % ground state of an infinite one-dimensional system, by applying imaginary
@@ -110,15 +110,26 @@ for it1 = (1:Nstep)
 
         % Contract Lambda's and Gamma's to construct a rank-4 ket tensor to
         % be updated
+        T = contract(diag(Lambda{3-it2}),2,2,Gamma{it2},3,1);
+        T = contract(T,3,2,diag(Lambda{it2}),2,1);
+        T = contract(T,3,3,Gamma{3-it2},3,1);
+        T = contract(T,4,3,diag(Lambda{3-it2}),2,1);
     
         % Contract a two-site gate exp(-taus(it1)*H) with the ket tensor
+        eHT = contract(expH,4,[3 4],T,4,[2 3],[3 1 2 4]);
     
         % SVD; truncate singular values smaller than Skeep (= 1e-8 by
         % default)
+        [UT,Lambda{it2},VT] = svdTr(eHT,4,[1 2],Nkeep,Skeep);
+        UT = permute(UT,[1 3 2]);
+        VT = permute(VT,[1 3 2]);
     
         % Normalize the singular value vector (so that the norm becomes 1)
+        Lambda{it2} = Lambda{it2}/norm(Lambda{it2});
         
         % Update Gamma{1}, Gamma{2}
+        Gamma{it2} = contract(diag(1./Lambda{3-it2}),2,2,UT,3,1);
+        Gamma{3-it2} = contract(VT,3,2,diag(1./Lambda{3-it2}),2,1,[1 3 2]);
         
         % Measure energy per bond; consider the following ket:
         % Lambda{2}*Gamma{1}*Lambda{1}*Gamma{2}*Lambda{2}*Gamma{1}*Lambda{1}
@@ -134,21 +145,39 @@ for it1 = (1:Nstep)
         % the tensors converge to be left- and right-normalized forms, as
         % the iteration goes.
         if it2 == 1
-            
+            TA = UT;
+            TB = contract(diag(Lambda{1}),2,2,VT,3,1);
+            TC = contract(Gamma{1},3,2,diag(Lambda{1}),2,1,[1 3 2]);
         else
-
+            TA = contract(diag(Lambda{2}),2,2,Gamma{1},3,1);
+            TB = contract(UT,3,2,diag(Lambda{2}),2,1,[1 3 2]);
+            TC = VT;
         end
 
         % contract the nearest-neighbor interaction term for an odd bond,
         % i.e., its 1st and 2nd legs act on an odd site
-        
+        T = contract(TA,3,2,TB,3,1,[1 2 4 3]);
+        Ho = contract(H,4,[2 4],T,4,[2 3],[3 1 2 4]);
+        Ho = contract(conj(T),4,(1:3),Ho,4,(1:3));
+        Ho = contract(Ho,2,2,TC,3,1);
+        Ho = contract(conj(TC),3,(1:3),Ho,3,(1:3));
+
         % contract the nearest-neighbor interaction term for an even bond,
         % i.e., its 1st and 2nd legs act on an even site
-        
+        T = contract(TB,3,2,TC,3,1,[1 2 4 3]);
+        He = contract(H,4,[2 4],T,4,[2 3],[3 1 2 4]);
+        He = contract(conj(T),4,(2:4),He,4,(2:4));
+        He = contract(TA,3,2,He,2,2);
+        He = contract(conj(TA),3,[1 3 2],He,3,(1:3));
+
         % compute the squared norm of the rank-5 ket tensor as a denominator for normalization
-        
+        ovl = updateLeft([],[],TA,[],[],TA);
+        ovl = updateLeft(ovl,2,TB,[],[],TB);
+        ovl = contract(ovl,2,2,TC,3,1);
+        ovl = contract(conj(TC),3,(1:3),ovl,3,(1:3));
+
         % assign normalized energy values
-        Eiter(it1,it2,:) = 
+        Eiter(it1,it2,:) = [Ho He]/ovl;
 
         % % % % TODO (end) % % % %
     end
